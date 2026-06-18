@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-select=none, touch-action=none">
+    <title>매일매일 와이어 런</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; touch-action: none; }
+        body, html { width: 100%; height: 100%; overflow: hidden; background-color: #f5f7fa; font-family: -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; }
+        #gameContainer { position: relative; width: 100%; height: 100%; max-width: 450px; max-height: 850px; background: #ffffff; box-shadow: 0 10px 30px rgba(0,0,0,0.05); display: flex; flex-direction: column; }
+        .hud { padding: 15px 20px; background: #fff; border-bottom: 1px solid #f2f4f6; display: flex; justify-content: space-between; font-weight: bold; font-size: 1.1rem; }
+        #scoreDisplay { color: #191f28; }
+        #bestDisplay { color: #ff4757; }
+        canvas { flex: 1; background: linear-gradient(to bottom, #eef2f7, #ffffff); display: block; }
+        .screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(25, 31, 40, 0.96); display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; z-index: 100; padding: 30px; text-align: center; }
+        .screen.hidden { display: none !important; }
+        .screen h1 { font-size: 2rem; margin-bottom: 15px; color: #3182f6; }
+        .screen p { font-size: 1rem; color: #b0b8c1; line-height: 1.6; margin-bottom: 30px; }
+        .btn-group { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 280px; }
+        .btn { padding: 16px; border: none; color: #fff; font-size: 1.1rem; font-weight: bold; border-radius: 12px; cursor: pointer; width: 100%; }
+        #startBtn { background: #3182f6; box-shadow: 0 4px 12px rgba(49, 130, 246, 0.3); }
+        #startBtn:disabled { background: #cbd5e1; color: #94a3b8; box-shadow: none; cursor: not-allowed; }
+        #inviteBtn { background: #00c73c; display: none; } /* 처음엔 숨김, 기회 소진시 등장 */
+    </style>
+</head>
+<body>
+
+    <div id="gameContainer">
+        <div class="hud">
+            <div id="scoreDisplay">SCORE: 0</div>
+            <div id="bestDisplay">👑 BEST: 0</div>
+        </div>
+        
+        <canvas id="gameCanvas"></canvas>
+
+        <div class="screen" id="menuScreen">
+            <h1 id="menuTitle">🚀 와이어 런: 무한 챌린지</h1>
+            <p id="menuText">
+                오직 컨트롤과 정교한 타이밍만으로 승부합니다.<br>추락하지 않고 가장 먼 거리까지 질주하세요!<br><br>
+                <b>[기회]</b> 하루에 딱 1번만 참여 가능 (현재 기회: <span id="chanceCount" style="color:#ffcc00; font-weight:bold;">1</span>회)
+            </p>
+            <div class="btn-group">
+                <button class="btn" id="startBtn">기록 도전하기</button>
+                <button class="btn" id="inviteBtn">✉️ 친구 초대하고 +1판 더 하기</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const bestDisplay = document.getElementById('bestDisplay');
+        const menuScreen = document.getElementById('menuScreen');
+        const menuTitle = document.getElementById('menuTitle');
+        const menuText = document.getElementById('menuText');
+        const startBtn = document.getElementById('startBtn');
+        const inviteBtn = document.getElementById('inviteBtn');
+        const chanceCountDisplay = document.getElementById('chanceCount');
+
+        canvas.width = 450; canvas.height = 700;
+
+        let isPlaying = false;
+        let score = 0;
+        let highScore = 0;
+        let gameSpeed = 3.5;
+        
+        // 핵심 변수: 오늘 남은 플레이 기회 수
+        let dailyChances = 1; 
+
+        function getTodayString() {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        // 브라우저 보안 에러를 완벽히 차단하는 안전한 데이터 로드
+        try {
+            highScore = parseInt(localStorage.getItem('wire_best')) || 0;
+            const lastDate = localStorage.getItem('wire_date');
+            const hasShared = localStorage.getItem('wire_shared') === 'true';
+
+            if (lastDate === getTodayString()) {
+                // 오늘 이미 게임을 한 기록이 있다면 기회를 0으로 설정
+                dailyChances = hasShared ? 0 : 0; 
+                // 만약 오늘 이미 했지만, 공유는 안 한 상태라면 기회는 없지만 초대 버튼을 보여줌
+                if(!hasShared) {
+                    dailyChances = 0;
+                } else {
+                    dailyChances = 0; // 공유까지 다 썼다면 오늘 진짜 끝
+                }
+            }
+        } catch(e) {
+            // 보안 차단이 일어나는 환경(로컬 파일 실행 등)이어도 게임이 작동하도록 우회
+            dailyChances = 1;
+        }
+
+        function updateUI() {
+            bestDisplay.innerText = `👑 BEST: ${highScore}`;
+            chanceCountDisplay.innerText = dailyChances;
+
+            if (dailyChances > 0) {
+                startBtn.disabled = false;
+                startBtn.innerText = "기록 도전하기";
+                inviteBtn.style.display = "none";
+            } else {
+                startBtn.disabled = true;
+                startBtn.innerText = "오늘 기회 모두 소진";
+                
+                // 오늘 공유한 적이 없는지 체크 후 초대 버튼 노출
+                try {
+                    if(localStorage.getItem('wire_shared') !== 'true') {
+                        inviteBtn.style.display = "block";
+                    } else {
+                        inviteBtn.style.display = "none";
+                        menuText.innerHTML = "오늘 제공된 판수와 초대 보너스를 모두 사용하셨습니다.<br>내일 자정에 다시 찾아와주세요!";
+                    }
+                } catch(e) {
+                    inviteBtn.style.display = "block"; // 에러 환경이어도 기능은 보이게
+                }
+            }
+        }
+
+        // 초기 UI 업데이트
+        updateUI();
+
+        let player = { x: 80, y: 400, radius: 15, vy: 0, gravity: 0.45, jumpPower: -9.5, isGrounded: false, isHooked: false, hookTarget: null, angle: 0, angleSpeed: 0.05, length: 0 };
+        let platforms = []; let hooks = [];
+
+        function initGame() {
+            if (dailyChances <= 0) return;
+
+            score = 0; gameSpeed = 3.5; player.y = 350; player.vy = 0; player.isGrounded = false; player.isHooked = false;
+            platforms = [{ x: 0, width: 300, y: 450 }, { x: 400, width: 250, y: 450 }];
+            hooks = [ { x: 350, y: 220 } ];
+            
+            scoreDisplay.innerText = `SCORE: 0`;
+            isPlaying = true;
+            menuScreen.classList.add('hidden');
+        }
+
+        // 인풋 제어
+        function handleInputStart() {
+            if (!isPlaying) return;
+            if (player.isGrounded) { player.vy = player.jumpPower; player.isGrounded = false; } 
+            else if (!player.isGrounded && !player.isHooked) {
+                hooks.forEach(h => {
+                    let dist = Math.hypot(player.x - h.x, player.y - h.y);
+                    if (dist < 140 && h.x > player.x) { player.isHooked = true; player.hookTarget = h; player.length = dist; player.angle = Math.atan2(player.y - h.y, player.x - h.x); }
+                });
+            }
+        }
+        function handleInputEnd() { if (player.isHooked) { player.isHooked = false; player.vy = Math.cos(player.angle) * 7 - 3; score += 150; scoreDisplay.innerText = `SCORE: ${score}`; } }
+
+        window.addEventListener('touchstart', (e) => { if(isPlaying) e.preventDefault(); handleInputStart(); }, {passive:false});
+        window.addEventListener('touchend', handleInputEnd);
+        window.addEventListener('mousedown', handleInputStart);
+        window.addEventListener('mouseup', handleInputEnd);
+
+        function update() {
+            if (!isPlaying) return;
+            gameSpeed += 0.0006; 
+            if (player.isHooked) {
+                player.angle += player.angleSpeed;
+                player.x = player.hookTarget.x + Math.cos(player.angle) * player.length;
+                player.y = player.hookTarget.y + Math.sin(player.angle) * player.length;
+                player.x -= gameSpeed;
+            } else { player.vy += player.gravity; player.y += player.vy; player.x = 80; }
+
+            platforms.forEach(p => p.x -= gameSpeed); hooks.forEach(h => h.x -= gameSpeed);
+            if (platforms[platforms.length - 1].x < canvas.width - 150) {
+                let nextWidth = Math.random() * 150 + 150; let nextGap = Math.random() * 90 + 90; let lastPlatform = platforms[platforms.length - 1];
+                platforms.push({ x: lastPlatform.x + lastPlatform.width + nextGap, width: nextWidth, y: 450 });
+                if (Math.random() > 0.3) { hooks.push({ x: lastPlatform.x + lastPlatform.width + (nextGap / 2) + 20, y: Math.random() * 60 + 190 }); }
+            }
+            if (platforms[0].x + platforms[0].width < 0) platforms.shift();
+            if (hooks[0] && hooks[0].x < 0) hooks.shift();
+
+            player.isGrounded = false;
+            if (!player.isHooked) {
+                platforms.forEach(p => {
+                    if (player.x + player.radius > p.x && player.x - player.radius < p.x + p.width && player.y + player.radius >= p.y && player.y + player.radius <= p.y + 12 && player.vy >= 0) { player.y = p.y - player.radius; player.vy = 0; player.isGrounded = true; }
+                });
+            }
+            if (player.y > canvas.height) gameOver();
+            score += 1; if (score % 10 === 0) scoreDisplay.innerText = `SCORE: ${score}`;
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = "#3182f6";
+            platforms.forEach(p => { ctx.fillRect(p.x, p.y, p.width, 20); });
+            hooks.forEach(h => { ctx.beginPath(); ctx.arc(h.x, h.y, 10, 0, Math.PI * 2); ctx.fillStyle = "#ffcc00"; ctx.fill(); ctx.closePath(); });
+            if (player.isHooked) { ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(player.hookTarget.x, player.hookTarget.y); ctx.lineWidth = 3; ctx.strokeStyle = "#6c5ce7"; ctx.stroke(); ctx.closePath(); }
+            ctx.beginPath(); ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2); ctx.fillStyle = player.isHooked ? "#6c5ce7" : "#ff4757"; ctx.fill(); ctx.closePath();
+        }
+
+        function gameOver() {
+            isPlaying = false;
+            dailyChances--; // 판수 차감
+
+            try {
+                localStorage.setItem('wire_date', getTodayString());
+            } catch(e) {}
+
+            if (score > highScore) {
+                highScore = score;
+                try { localStorage.setItem('wire_best', highScore); } catch(e) {}
+            }
+
+            const randomReward = Math.floor(Math.random() * 10) + 1;
+            menuTitle.innerText = "💥 GAME OVER";
+            menuTitle.style.color = "#ff4757";
+            menuText.innerHTML = `획득 점수: ${score.toLocaleString()}점<br>오늘의 랜덤 리워드: <b>${randomReward}원</b> 지급 완료!<br><br>남은 도전 기회: <span style='color:#ffcc00; font-weight:bold;'>${dailyChances}</span>회`;
+            
+            updateUI();
+            menuScreen.classList.remove('hidden');
+        }
+
+        // [핵심 기능] 친구 초대 버튼을 눌렀을 때 작동하는 로직
+        inviteBtn.onclick = function() {
+            alert("🔗 초대 링크가 복사되었습니다! 친구가 수락하면 1판이 더 지급됩니다.");
+            
+            dailyChances = 1; // 기회를 다시 1회로 충전!
+            try {
+                localStorage.setItem('wire_shared', 'true'); // 오늘 공유 보너스를 받았다고 기록
+            } catch(e) {}
+
+            menuTitle.innerText = "🚀 보너스 기회 획득!";
+            menuTitle.style.color = "#3182f6";
+            menuText.innerHTML = "친구 초대 보너스로 <b>추가 기회 1회</b>를 얻었습니다!<br>지금 바로 최고 기록에 다시 도전해 보세요.";
+            
+            updateUI();
+        };
+
+        startBtn.onclick = function() { initGame(); };
+
+        function loop() { update(); draw(); requestAnimationFrame(loop); }
+        loop();
+    </script>
+</body>
+</html>
